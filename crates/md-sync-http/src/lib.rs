@@ -28,8 +28,24 @@ pub struct HttpClient {
 
 impl HttpClient {
     pub fn new() -> Result<Self> {
-        let inner = reqwest::Client::builder()
-            .user_agent(concat!("md-sync/", env!("CARGO_PKG_VERSION")))
+        Self::build(true)
+    }
+
+    /// Like [`HttpClient::new`], but never follows redirects. S3 uses
+    /// this: a 301/307 from the service means the endpoint or region is
+    /// wrong and must surface as an error, not be replayed (signed) at
+    /// another host.
+    pub fn no_redirect() -> Result<Self> {
+        Self::build(false)
+    }
+
+    fn build(follow_redirects: bool) -> Result<Self> {
+        let mut builder =
+            reqwest::Client::builder().user_agent(concat!("md-sync/", env!("CARGO_PKG_VERSION")));
+        if !follow_redirects {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+        }
+        let inner = builder
             .build()
             .map_err(|e| SyncError::Backend(e.to_string()))?;
         Ok(HttpClient { inner })
@@ -43,6 +59,9 @@ impl HttpClient {
     /// 401/403 -> `Unauthorized`, 404 -> `NotFound`, other 4xx/5xx ->
     /// `Backend` with the status (body is not included: it may contain
     /// provider internals, and it is rarely useful at sync granularity).
+    /// A failure to send the request or read the body is `Backend` with
+    /// a `transport: ` prefix, so callers can tell network failures apart
+    /// from HTTP error statuses.
     pub async fn request(
         &self,
         method: Method,
@@ -89,13 +108,13 @@ impl HttpClient {
         let resp = req
             .send()
             .await
-            .map_err(|e| SyncError::Backend(e.to_string()))?;
+            .map_err(|e| SyncError::Backend(format!("transport: {e}")))?;
         let status = resp.status();
         let resp_headers = resp.headers().clone();
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| SyncError::Backend(e.to_string()))?
+            .map_err(|e| SyncError::Backend(format!("transport: {e}")))?
             .to_vec();
         match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
@@ -141,13 +160,13 @@ impl HttpClient {
         let resp = req
             .send()
             .await
-            .map_err(|e| SyncError::Backend(e.to_string()))?;
+            .map_err(|e| SyncError::Backend(format!("transport: {e}")))?;
         let status = resp.status();
         let resp_headers = resp.headers().clone();
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| SyncError::Backend(e.to_string()))?
+            .map_err(|e| SyncError::Backend(format!("transport: {e}")))?
             .to_vec();
         Ok((status, resp_headers, bytes))
     }
@@ -186,12 +205,12 @@ impl HttpClient {
         let resp = req
             .send()
             .await
-            .map_err(|e| SyncError::Backend(e.to_string()))?;
+            .map_err(|e| SyncError::Backend(format!("transport: {e}")))?;
         let status = resp.status();
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| SyncError::Backend(e.to_string()))?
+            .map_err(|e| SyncError::Backend(format!("transport: {e}")))?
             .to_vec();
         Ok((status, bytes))
     }

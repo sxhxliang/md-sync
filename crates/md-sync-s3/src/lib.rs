@@ -139,7 +139,7 @@ impl Builder for S3Builder {
             }
         };
         Ok(Arc::new(S3Backend {
-            http: HttpClient::new()?,
+            http: HttpClient::no_redirect()?,
             bucket: self.bucket,
             region,
             base_url,
@@ -277,9 +277,14 @@ impl S3Backend {
             extra,
             SystemTime::now(),
         )?;
-        self.http
-            .request_full(method, url, &Auth::None, &headers, body)
-            .await
+        let (status, headers, body) = self
+            .http
+            .request_unchecked_full(method, url, &Auth::None, &headers, body)
+            .await?;
+        if status.is_success() {
+            return Ok((status, headers, body));
+        }
+        Err(map_s3_error(status, &body, url))
     }
 
     async fn list_page(&self, continuation: Option<&str>) -> Result<(Vec<Entry>, Option<String>)> {
@@ -294,6 +299,55 @@ impl S3Backend {
         }
         let (_, _, body) = self.signed_request(Method::GET, &url, &[], None).await?;
         parse_list_xml(&body, &self.prefix)
+    }
+}
+
+/// Extract the S3 error `<Code>` from an error body, if any. Only the first
+/// 16 KiB are inspected: error payloads are small, and a code is never
+/// useful past that point. Returns `None` when the body carries no code.
+fn s3_error_code(body: &[u8]) -> Option<String> {
+    let head = &body[..body.len().min(16 * 1024)];
+    let start = find_subslice(head, b"<Code>")? + "<Code>".len();
+    let end = find_subslice(&head[start..], b"</Code>")? + start;
+    let code = std::str::from_utf8(&head[start..end]).ok()?;
+    if code.is_empty() || code.len() > 64 || !code.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(code.to_string())
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// Map a non-2xx S3 response to [`SyncError`]. The status-to-variant
+/// mapping matches `md_sync_http::HttpClient::request_full` exactly, so
+/// sync callers see no behavior change; when the body carries an S3
+/// `<Code>`, it is prefixed as `S3 {code}: ...` so callers that need the
+/// provider's own diagnosis (image uploads distinguish auth, bucket,
+/// endpoint, clock-skew and conditional failures) can recover it from the
+/// message without another round trip.
+fn map_s3_error(status: StatusCode, body: &[u8], url: &str) -> SyncError {
+    let code = s3_error_code(body);
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => match code {
+            Some(code) => SyncError::Unauthorized(format!("S3 {code}: {status} for {url}")),
+            None => SyncError::Unauthorized(format!("{status} for {url}")),
+        },
+        StatusCode::NOT_FOUND => match code {
+            Some(code) => SyncError::NotFound(format!("S3 {code}: {url}")),
+            None => SyncError::NotFound(url.to_string()),
+        },
+        StatusCode::PRECONDITION_FAILED => match code {
+            Some(code) => SyncError::PreconditionFailed(format!("S3 {code}: HTTP 412 for {url}")),
+            None => SyncError::PreconditionFailed(format!("HTTP 412 for {url}")),
+        },
+        s => match code {
+            Some(code) => SyncError::Backend(format!("S3 {code}: HTTP {s} for {url}")),
+            None => SyncError::Backend(format!("HTTP {s} for {url}")),
+        },
     }
 }
 
@@ -583,5 +637,58 @@ mod tests {
         assert_eq!(entries[0].path.as_str(), "a.md");
         assert_eq!(entries[0].size, 42);
         assert_eq!(entries[0].etag.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn s3_error_code_parses_and_rejects_garbage() {
+        let body = br#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>SignatureDoesNotMatch</Code><Message>bad sig</Message></Error>"#;
+        assert_eq!(
+            s3_error_code(body).as_deref(),
+            Some("SignatureDoesNotMatch")
+        );
+        assert_eq!(s3_error_code(b"<Error></Error>").as_deref(), None);
+        assert_eq!(s3_error_code(b"").as_deref(), None);
+        // Codes are bare identifiers: reject anything that looks like markup.
+        let body = b"<Error><Code>No Such Bucket</Code></Error>";
+        assert_eq!(s3_error_code(body).as_deref(), None);
+    }
+
+    #[test]
+    fn s3_error_mapping_keeps_variant_and_carries_code() {
+        let url = "https://examplebucket.s3.amazonaws.com/x.png";
+        let body = b"<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code></Error>";
+        match map_s3_error(StatusCode::FORBIDDEN, body, url) {
+            SyncError::Unauthorized(message) => {
+                assert!(message.contains("S3 AccessDenied"), "{message}");
+                assert!(message.contains("403"), "{message}");
+            }
+            other => panic!("expected Unauthorized, got {other:?}"),
+        }
+        match map_s3_error(
+            StatusCode::NOT_FOUND,
+            b"<Error><Code>NoSuchBucket</Code></Error>",
+            url,
+        ) {
+            SyncError::NotFound(message) => {
+                assert!(message.contains("S3 NoSuchBucket"), "{message}");
+            }
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+        match map_s3_error(StatusCode::PRECONDITION_FAILED, b"", url) {
+            SyncError::PreconditionFailed(message) => {
+                assert!(!message.contains("S3 "), "{message}");
+            }
+            other => panic!("expected PreconditionFailed, got {other:?}"),
+        }
+        match map_s3_error(
+            StatusCode::BAD_REQUEST,
+            b"<Error><Code>RequestTimeTooSkewed</Code></Error>",
+            url,
+        ) {
+            SyncError::Backend(message) => {
+                assert!(message.contains("S3 RequestTimeTooSkewed"), "{message}");
+            }
+            other => panic!("expected Backend, got {other:?}"),
+        }
     }
 }

@@ -158,3 +158,105 @@ impl OAuthRefresher {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    /// A loopback token endpoint that counts refresh-grant POSTs.
+    /// `expected` caps how many requests the server answers before it
+    /// exits on its own; the test still asserts the exact count.
+    fn token_server(expected: usize) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}/oauth2/token", listener.local_addr().unwrap());
+        let count = Arc::new(AtomicUsize::new(0));
+        let seen = count.clone();
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut served = 0;
+            while served < expected && Instant::now() < deadline {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut head = Vec::new();
+                let mut byte = [0];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if stream.read_exact(&mut byte).is_err() {
+                        return;
+                    }
+                    head.push(byte[0]);
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                let length = head
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':')
+                            .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                let mut body = vec![0; length];
+                if stream.read_exact(&mut body).is_err() {
+                    return;
+                }
+                assert!(head.starts_with("POST /oauth2/token"));
+                assert!(
+                    String::from_utf8_lossy(&body).contains("grant_type=refresh_token"),
+                    "refresh grant expected"
+                );
+                seen.fetch_add(1, Ordering::SeqCst);
+                let payload = br#"{"access_token":"test-access","refresh_token":"test-refresh","expires_in":3600}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    String::from_utf8_lossy(payload),
+                );
+                if stream.write_all(response.as_bytes()).is_err() {
+                    return;
+                }
+                served += 1;
+            }
+        });
+        (endpoint, count)
+    }
+
+    #[tokio::test]
+    async fn valid_tokens_are_cached_and_rejected_ones_refresh_once() {
+        let (endpoint, count) = token_server(2);
+        let http = HttpClient::new().unwrap();
+        let refresher = OAuthRefresher::new(OAuthConfig {
+            token_url: endpoint,
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            refresh_token: "refresh".into(),
+            scope: Some("offline_access Files.ReadWrite".into()),
+        });
+        assert_eq!(refresher.token(&http, None).await.unwrap(), "test-access");
+        assert_eq!(refresher.token(&http, None).await.unwrap(), "test-access");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "second call must hit the cache"
+        );
+        assert_eq!(
+            refresher.token(&http, Some("test-access")).await.unwrap(),
+            "test-access"
+        );
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            2,
+            "a rejected token must refresh exactly once"
+        );
+    }
+}
