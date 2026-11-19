@@ -623,6 +623,32 @@ mod tests {
     }
 
     #[test]
+    fn signing_scope_uses_the_configured_region_verbatim() {
+        // R2 accounts sign with the literal region "auto"; the scope must
+        // carry it through unchanged (Genius passes `signing_region()` here).
+        let mut b = test_backend();
+        b.region = "auto".to_string();
+        let now = md_sync_http::date::unix_from_parts(2013, 5, 24, 0, 0, 0);
+        let headers = b
+            .sign(
+                "PUT",
+                "https://examplebucket.s3.amazonaws.com/test.txt",
+                &sha256_hex(b""),
+                &[],
+                now,
+            )
+            .unwrap();
+        let auth = headers
+            .iter()
+            .find(|(k, _)| k == "Authorization")
+            .expect("Authorization header")
+            .1
+            .clone();
+        assert!(auth.contains("/auto/s3/aws4_request"), "{auth}");
+        assert!(!auth.contains("us-east-1"), "{auth}");
+    }
+
+    #[test]
     fn list_xml_parses() {
         let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
