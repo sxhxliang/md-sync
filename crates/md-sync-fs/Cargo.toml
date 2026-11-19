@@ -1,0 +1,12 @@
+[package]
+name = "md-sync-fs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Local filesystem backend for md-sync"
+
+[dependencies]
+md-sync-core.workspace = true
+async-trait.workspace = true
+tokio.workspace = true

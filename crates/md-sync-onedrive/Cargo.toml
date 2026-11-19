@@ -1,0 +1,14 @@
+[package]
+name = "md-sync-onedrive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Microsoft OneDrive backend for md-sync (Microsoft Graph)"
+
+[dependencies]
+md-sync-core.workspace = true
+md-sync-http.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true

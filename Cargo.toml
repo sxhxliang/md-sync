@@ -1,0 +1,57 @@
+[workspace]
+members = [
+    "crates/md-sync-core",
+    "crates/md-sync-fs",
+    "crates/md-sync-http",
+    "crates/md-sync-s3",
+    "crates/md-sync-webdav",
+    "crates/md-sync-gdrive",
+    "crates/md-sync-onedrive",
+    "crates/md-sync-dropbox",
+    "crates/md-sync-managed-gdrive",
+    "crates/md-sync",
+    "crates/md-sync-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://example.com/md-sync"
+authors = ["md-sync contributors"]
+
+# One place for versions: every crate pins from here, so a bump is one line.
+[workspace.dependencies]
+md-sync-core = { path = "crates/md-sync-core" }
+md-sync-fs = { path = "crates/md-sync-fs" }
+md-sync-http = { path = "crates/md-sync-http" }
+md-sync-s3 = { path = "crates/md-sync-s3" }
+md-sync-webdav = { path = "crates/md-sync-webdav" }
+md-sync-gdrive = { path = "crates/md-sync-gdrive" }
+md-sync-onedrive = { path = "crates/md-sync-onedrive" }
+md-sync-dropbox = { path = "crates/md-sync-dropbox" }
+md-sync-managed-gdrive = { path = "crates/md-sync-managed-gdrive" }
+md-sync = { path = "crates/md-sync", default-features = false }
+
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+blake3 = "1.5"
+rand = "0.10.3"
+sha2 = "0.10.9"
+thiserror = "2.0.18"
+async-trait = "0.1.92"
+tokio = { version = "1.54", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls"] }
+quick-xml = "0.39.4"
+hmac = "0.12.1"
+clap = { version = "4.6.1", features = ["derive"] }
+
+[profile.release]
+# Small and beautiful, literally: favour size over speed for a docs tool.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

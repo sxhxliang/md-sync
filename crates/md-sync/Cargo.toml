@@ -1,0 +1,28 @@
+[package]
+name = "md-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Markdown sync/backup library: small, multi-crate, feature-gated backends (fs, S3, WebDAV, Google Drive, OneDrive, Dropbox)"
+
+[features]
+default = ["fs"]
+fs = ["dep:md-sync-fs"]
+s3 = ["dep:md-sync-s3"]
+webdav = ["dep:md-sync-webdav"]
+gdrive = ["dep:md-sync-gdrive"]
+onedrive = ["dep:md-sync-onedrive"]
+dropbox = ["dep:md-sync-dropbox"]
+managed-gdrive = ["dep:md-sync-managed-gdrive"]
+full = ["fs", "s3", "webdav", "gdrive", "onedrive", "dropbox", "managed-gdrive"]
+
+[dependencies]
+md-sync-core.workspace = true
+md-sync-fs = { workspace = true, optional = true }
+md-sync-s3 = { workspace = true, optional = true }
+md-sync-webdav = { workspace = true, optional = true }
+md-sync-gdrive = { workspace = true, optional = true }
+md-sync-onedrive = { workspace = true, optional = true }
+md-sync-dropbox = { workspace = true, optional = true }
+md-sync-managed-gdrive = { workspace = true, optional = true }

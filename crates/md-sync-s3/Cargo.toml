@@ -1,0 +1,19 @@
+[package]
+name = "md-sync-s3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Amazon S3 (and S3-compatible) backend for md-sync"
+
+[dependencies]
+md-sync-core.workspace = true
+md-sync-http.workspace = true
+async-trait.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+quick-xml.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -1,0 +1,17 @@
+[package]
+name = "md-sync-managed-gdrive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Managed Google Drive backend for md-sync: content-addressed storage behind a CAS manifest (Drive v2 API)"
+
+[dependencies]
+md-sync-core.workspace = true
+md-sync-http.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+blake3.workspace = true
+rand.workspace = true

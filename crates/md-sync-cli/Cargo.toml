@@ -1,0 +1,30 @@
+[package]
+name = "md-sync-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Example CLI for md-sync (also the verification harness)"
+publish = false
+
+[[bin]]
+name = "md-sync"
+path = "src/main.rs"
+
+[features]
+default = ["full"]
+fs = ["md-sync/fs"]
+s3 = ["md-sync/s3"]
+webdav = ["md-sync/webdav"]
+gdrive = ["md-sync/gdrive"]
+onedrive = ["md-sync/onedrive"]
+full = ["fs", "s3", "webdav", "gdrive", "onedrive"]
+
+[dependencies]
+md-sync = { workspace = true }
+tokio.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+md-sync-core.workspace = true
